@@ -1,0 +1,32 @@
+version: '3'
+
+tasks:
+
+  default:
+    desc: Run all tasks
+    cmds:
+      - task lint
+      - task type-check
+#      - task test
+
+  lint:
+    desc: Check code with ruff (linting and formatting)
+    cmds:
+      - uv run ruff check .
+      - uv run ruff format --check .
+
+  lint-fix:
+    desc: Fix code issues with ruff (linting and formatting)
+    cmds:
+      - uv run ruff check --fix --unsafe-fixes .
+      - uv run ruff format .
+
+#  test:
+#    desc: Run test with pytest
+#    cmds:
+#      - uv run pytest ./test
+
+  type-check:
+    desc: Check types with mypy
+    cmds:
+      - uv run mypy .
