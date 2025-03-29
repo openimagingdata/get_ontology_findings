@@ -31,4 +31,4 @@ Also:
         use "uv sync" to install dependencies
     Look into taskfile.yml
     Learn about taskfile
-    
+    edit
