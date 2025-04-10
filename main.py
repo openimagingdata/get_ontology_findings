@@ -2,8 +2,9 @@ import os
 from typing import Literal, Optional
 
 import instructor
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AzureOpenAI, OpenAI
 from pydantic import BaseModel, Field
 
 CXR_REPORT = """
@@ -32,19 +33,45 @@ class Finding(BaseModel):
     )
 
 
+def openai_client() -> OpenAI:
+    """Create an OpenAI client."""
+    return OpenAI(
+        api_key=os.environ["OPENAI_API_KEY"],
+        base_url="https://api.openai.com/v1",
+        organization=os.environ["OPENAI_ORGANIZATION"],
+    )
+
+
+def local_client() -> OpenAI:
+    """Create a local OpenAI client."""
+    return OpenAI(
+        base_url="http://127.0.0.1:8000/v1",
+        api_key="vllm",
+    )
+
+
+def azure_openai_client() -> OpenAI:
+    """Create an Azure OpenAI client."""
+    token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+
+    client = AzureOpenAI(
+        api_version="2024-12-01-preview",
+        azure_endpoint="https://autoprotocoling.openai.azure.com/",
+        azure_ad_token_provider=token_provider,
+    )
+    return client
+
+
+VLLM_MODEL = "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
+OPENAI_MODEL = "gpt-4o-mini"
+
+
 def extract_findings(report: str) -> list[Finding]:
     """Extract findings from a radiology report."""
 
-    client = instructor.from_openai(
-        # OpenAI(
-        #     base_url="http://localhost:11434/v1",
-        #     api_key="Keys? We don't need no stinking keys!",
-        # ),
-        # mode=instructor.Mode.JSON,
-        OpenAI(api_key=os.environ["OPENAI_API_KEY"]),
-    )
+    client = instructor.from_openai(local_client())
     finding_info = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=VLLM_MODEL,
         response_model=list[Finding],
         messages=[
             {
