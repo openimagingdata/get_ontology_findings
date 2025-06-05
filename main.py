@@ -57,6 +57,14 @@ class RadLexFinding(BaseModel):
     type: Literal["observation", "diagnosis"] = Field(
         description="The type of the concept. Can be either 'observation' or 'diagnosis'."
     )
+    reportable: bool = Field(
+        description="""Whether the finding is a specific term that a radiologist would describe in a radiologist report. 
+        For example, a radiologist wouldn't describe 'regurgitation' in a report (it's too general), 
+        but they might describe 'mitral valve regurgitation'. 
+        They wouldn't describe 'esophageal disorder', but they would describe 'achalasia.' 
+        They wouldn't describe 'hernia', but they might describe 'inguinal hernia' or 'peristomal hernia'.
+        If the finding is too general or not specific enough to be used in a report, this should be False.""",
+    )
 
 
 async def extract_findings(
@@ -80,15 +88,23 @@ async def extract_findings(
         response_model=list[RadLexFinding],
         messages=[
             {
+                "role": "system",
+                "content": "You are a medical informaticist tasked with extracting findings from an ontology. "
+                "A finding is either an observation or a diagnosis that a radiologist would make in a report. "
+                "Do not extract terms that are not findings, such as anatomical terms."
+                "Do not include synonyms in the output."
+                "Use only standard terms. Do not improve or modify the terms.",
+            },
+            {
                 "role": "user",
                 "content": f"Extract the findings from the following set of RadLex concepts:\n{term_str}",
-            }
+            },
         ],
     )
     return finding_info
 
 
-BATCH_SIZE = 40
+BATCH_SIZE = 16
 
 
 async def main() -> None:
