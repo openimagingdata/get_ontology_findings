@@ -1,5 +1,6 @@
 import csv
 import os
+import random
 from typing import Literal, Optional
 
 import instructor
@@ -57,22 +58,21 @@ class RadLexFinding(BaseModel):
     type: Literal["observation", "diagnosis"] = Field(
         description="The type of the concept. Can be either 'observation' or 'diagnosis'."
     )
-    reportable: bool = Field(
-        description="""Whether the finding is a specific term that a radiologist would describe in a radiologist report. 
-        For example, a radiologist wouldn't describe 'regurgitation' in a report (it's too general), 
-        but they might describe 'mitral valve regurgitation'. 
-        They wouldn't describe 'esophageal disorder', but they would describe 'achalasia.' 
-        They wouldn't describe 'hernia', but they might describe 'inguinal hernia' or 'peristomal hernia'.
-        If the finding is too general or not specific enough to be used in a report, this should be False.""",
+    specificity: Literal["specific", "general"] = Field(
+        description="The specificity of the concept, whether it refers to a specific finding or a general category of findings."
     )
+    finding_or_attribute: Literal["finding", "attribute"] = Field(
+        description="Whether the concept is something being described or a property of something being described."
+    )
+
+
+MAX_SIMULTANEOUS_REQUESTS = 10
 
 
 async def extract_findings(
     client: instructor.AsyncInstructor, terms: list[RadLexTerm], model: str = "gpt-4o-mini"
 ) -> list[RadLexFinding]:
     """Extract findings from a batch of RadLexTerms."""
-
-    term_str = "\n".join(term.pretty_str(include_synonyms=True) for term in terms)
 
     # TODO: Make the prompt much better
     #   - Give it a system prompt that it's a medical informaticist helping to organize
@@ -83,28 +83,56 @@ async def extract_findings(
 
     # TODO: Make sure we're using appropriate retries
     # TODO: Make the interface nicer using TQDM
-    finding_info = await client.chat.completions.create(
-        model=model,
-        response_model=list[RadLexFinding],
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a medical informaticist tasked with extracting findings from an ontology. "
-                "A finding is either an observation or a diagnosis that a radiologist would make in a report. "
-                "Do not extract terms that are not findings, such as anatomical terms."
-                "Do not include synonyms in the output."
-                "Use only standard terms. Do not improve or modify the terms.",
-            },
-            {
-                "role": "user",
-                "content": f"Extract the findings from the following set of RadLex concepts:\n{term_str}",
-            },
-        ],
-    )
-    return finding_info
+
+    SYSTEM_PROMPT = """
+    You are a medical informaticist tasked with extracting findings from an ontology. 
+    A finding is either an observation or a diagnosis that a radiologist would make in a report. 
+    Do not extract terms that are not findings, such as anatomical structures or imaging techniques.
+    For example, "l2 root of femoral nerve", "external granular layer of left Brodmann area 2", "ureteral
+    proper wall", "cochlear septum", and "premotor cortex" are anatomical structures and should not
+    be included in the output.
+    Do not include synonyms in the output.
+    Use only standard terms. Do not improve or modify the terms.
+    """
+
+    def make_user_prompt(term_str: str) -> str:
+        return f"""
+        Include whether the finding is a specific term that a radiologist would describe in a radiologist report
+        or a general category. 
+        For example, a radiologist wouldn't describe 'regurgitation' in a report (it's too general), 
+        but they might describe 'mitral valve regurgitation'. 
+        They wouldn't describe 'esophageal disorder', but they would describe 'achalasia.' 
+        They wouldn't describe 'hernia', but they might describe 'inguinal hernia' or 'peristomal hernia'.
+
+        Also include whether the concept refers to a finding or an attribute of a finding. For example,
+        "vascular calcification" is a finding, while "calcified" is an attribute of a finding. "Liver lesion" is a finding,
+        while "T2 hyperintense" is an attribute of a finding.
+
+        Extract the findings from the following set of RadLex concepts:
+        {term_str}
+        """
+
+    results: list[RadLexFinding] = []
+    for offset in range(0, len(terms), 4):
+        term_set = terms[offset : offset + 4]
+        term_str = "\n".join(term.pretty_str(include_synonyms=True) for term in term_set)
+        finding_info = await client.chat.completions.create(
+            model=model,
+            response_model=list[RadLexFinding],
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": make_user_prompt(term_str),
+                },
+            ],
+        )
+        if finding_info:
+            results.extend(finding_info)
+    return results
 
 
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 
 
 async def main() -> None:
@@ -119,8 +147,9 @@ async def main() -> None:
     # TODO: Find an appropriate batch size that gives good results
     # TODO: See which models give the best results
     # TODO: Maybe we can use OpenRouter to try some non-OpenAI models (Claude, Gemini, DeepSeek?)
-    offset = 13449
-    findings = await extract_findings(client, radlex_terms[offset : offset + BATCH_SIZE])
+    random_batch = random.sample(radlex_terms, BATCH_SIZE)
+    print(f"Extracting findings from {len(random_batch)} random RadLex terms.")
+    findings = await extract_findings(client, random_batch)
     for finding in findings:
         print(finding)
 
